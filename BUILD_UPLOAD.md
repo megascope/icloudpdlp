@@ -1,6 +1,6 @@
 # Building and Uploading to PyPI
 
-This guide explains how to build and upload the `icloudpdp` package to PyPI.
+This guide explains how to build and upload the `icloudpdlp` package to PyPI.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ pip install build twine
 ## Building the Package
 
 1. Make sure all your code is ready and tested
-2. Update the version number in `pyproject.toml` and `src/icloudpdp/__init__.py`
+2. Update the version number in `pyproject.toml` and `src/icloudpdlp/__init__.py`
 3. Build the distribution packages:
 
 ```bash
@@ -29,8 +29,8 @@ This creates two files in the `dist/` directory:
 Before uploading to PyPI, test your package locally:
 
 ```bash
-pip install dist/icloudpdp-0.1.0-py3-none-any.whl
-icloudpdp --help
+pip install dist/icloudpdlp-0.1.0-py3-none-any.whl
+icloudpdlp --help
 ```
 
 ## Uploading to PyPI
@@ -47,7 +47,7 @@ python -m twine upload --repository testpypi dist/*
 3. Test installation from Test PyPI:
 
 ```bash
-pip install --index-url https://test.pypi.org/simple/ icloudpdp
+pip install --index-url https://test.pypi.org/simple/ icloudpdlp
 ```
 
 ### Production PyPI
@@ -59,7 +59,7 @@ pip install --index-url https://test.pypi.org/simple/ icloudpdp
 python -m twine upload dist/*
 ```
 
-3. Your package will be available at: https://pypi.org/project/icloudpdp/
+3. Your package will be available at: https://pypi.org/project/icloudpdlp/
 
 ## Using API Tokens (Recommended)
 

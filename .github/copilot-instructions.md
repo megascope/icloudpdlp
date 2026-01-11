@@ -1,10 +1,10 @@
-# icloudpdp Project Setup Instructions
+# icloudpdlp Project Setup Instructions
 
 ## Project Overview
 Python CLI utility for processing iCloud Photos downloads. The tool organizes photos from Apple's archive format into structured directories with proper metadata.
 
 ## Project Structure
-- src/icloudpdp/ - Main package code
+- src/icloudpdlp/ - Main package code
 - tests/ - Test files
 - pyproject.toml - Modern Python packaging configuration
 - setup.py - Compatibility layer
@@ -24,4 +24,4 @@ Python CLI utility for processing iCloud Photos downloads. The tool organizes ph
 - csv - Built-in Python module for CSV processing
 
 ## CLI Entry Point
-Command: `icloudpdp`
+Command: `icloudpdlp`

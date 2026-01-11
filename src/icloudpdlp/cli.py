@@ -2,6 +2,9 @@
 
 import argparse
 import sys
+import csv
+import exiftool
+
 from pathlib import Path
 
 
@@ -9,7 +12,7 @@ def main():
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
         description="Process and organize iCloud Photos archives",
-        prog="icloudpdp"
+        prog="icloudpdlp"
     )
 
     parser.add_argument(
@@ -22,6 +25,12 @@ def main():
         "output_dir",
         type=Path,
         help="Directory where organized photos will be saved"
+    )
+
+    parser.add_argument(
+        "--overwrite", "-y",
+        action="store_true",
+        help="No confirmation prompts, overwrite existing files without asking"
     )
 
     parser.add_argument(

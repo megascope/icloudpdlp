@@ -2,12 +2,12 @@
 
 import pytest
 from pathlib import Path
-from icloudpdp.cli import main
+from icloudpdlp.cli import main
 
 
 def test_main_help(capsys, monkeypatch):
     """Test that --help works."""
-    monkeypatch.setattr("sys.argv", ["icloudpdp", "--help"])
+    monkeypatch.setattr("sys.argv", ["icloudpdlp", "--help"])
 
     with pytest.raises(SystemExit) as exc_info:
         main()
@@ -19,7 +19,7 @@ def test_main_help(capsys, monkeypatch):
 
 def test_main_version(capsys, monkeypatch):
     """Test that --version works."""
-    monkeypatch.setattr("sys.argv", ["icloudpdp", "--version"])
+    monkeypatch.setattr("sys.argv", ["icloudpdlp", "--version"])
 
     with pytest.raises(SystemExit) as exc_info:
         main()

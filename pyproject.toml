@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "icloudpdp"
+name = "icloudpdlp"
 version = "0.1.0"
 description = "Process and organize iCloud Photos archives downloaded from Apple"
 readme = "readme.md"
@@ -40,12 +40,12 @@ dev = [
 ]
 
 [project.scripts]
-icloudpdp = "icloudpdp.cli:main"
+icloudpdlp = "icloudpdlp.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/icloudpdp"
-Repository = "https://github.com/yourusername/icloudpdp"
-Issues = "https://github.com/yourusername/icloudpdp/issues"
+Homepage = "https://github.com/yourusername/icloudpdlp"
+Repository = "https://github.com/yourusername/icloudpdlp"
+Issues = "https://github.com/yourusername/icloudpdlp/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
