@@ -4,11 +4,12 @@ import argparse
 import sys
 import csv
 import exiftool
+import shutil
+import os
 
 from pathlib import Path
+import datetime
 
-import hashlib
-import base64
 
 # Constants
 DIR_PHOTOS = "Photos"
@@ -19,51 +20,29 @@ CSV_EXT = ".csv"
 
 # Contents of the CSV files
 COL_IMG_NAME = "imgName"
-COL_CHECKSUM = "fileChecksum"
+COL_CHECKSUM = "fileChecksum" # This is a base64 encoded MMCS Hash, no documentation available to replicate
 COL_CREATED_DATE = "originalCreationDate"
 COL_IMPORT_DATE = "importDate"
 COL_BY_ME = "contributedByMe"
 COL_DELETED = "deleted"
+COL_PATH = "pyFilePath"
+COL_ISSHARED = "pyIsShared"
+COL_CREATEDATE = "pyCreateDate"
+COL_SKIP = "pySkip"
 
 VAL_YES = "yes"
 VAL_NO = "no"
 
-def calculate_file_checksum(file_path):
-    """Calculate various checksums for comparison."""
-    with open(file_path, 'rb') as f:
-        data = f.read()
+EXIF_CREATEDATE = "CreateDate"
+EXIF_SSCREATEDATE = "SubSecDateTimeOriginal"
+EXIF_DTORIGINAL = "DateTimeOriginal"
+EXIF_DTOFFSET = "OffsetTimeOriginal"
+EXIF_CREATIONDATE = "CreationDate"
 
-    # SHA-1 (20 bytes → 28 chars base64)
-    sha1 = base64.b64encode(hashlib.sha1(data).digest()).decode('utf-8')
+EXIFTAGS = [EXIF_CREATEDATE, EXIF_SSCREATEDATE, EXIF_DTORIGINAL, EXIF_DTOFFSET, EXIF_CREATIONDATE]
 
-    # MD5 (16 bytes → 24 chars base64) - less likely but possible
-    md5 = base64.b64encode(hashlib.md5(data).digest()).decode('utf-8')
-
-    # SHA-256 (32 bytes → 44 chars base64) - probably too long
-    sha256 = base64.b64encode(hashlib.sha256(data).digest()).decode('utf-8')
-
-    # Also try hex encoding in case it's not base64
-    sha1_hex = hashlib.sha1(data).hexdigest()
-    md5_hex = hashlib.md5(data).hexdigest()
-
-    print(f"SHA-1 (base64): {sha1}")
-    print(f"MD5 (base64):   {md5}")
-    print(f"SHA-256 (base64): {sha256}")
-    print(f"SHA-1 (hex):    {sha1_hex}")
-    print(f"MD5 (hex):      {md5_hex}")
-
-def xcalculate_file_checksum(file_path):
-    """Calculate SHA-1 checksum of a file and return it in base64 format."""
-    sha1 = hashlib.sha1()
-
-    # Read file in chunks to handle large files efficiently
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b''):
-            sha1.update(chunk)
-
-    # Return base64-encoded SHA-1 hash
-    return base64.b64encode(sha1.digest()).decode('utf-8')
-
+EXIF_HEADER = "EXIF:"
+EXIF_SOURCEFILE = "SourceFile"
 
 # ANSI color codes
 class Colors:
@@ -133,13 +112,7 @@ def main():
     parser.add_argument(
         "--skip-shared-library",
         action="store_true",
-        help="Do not process photos from the Shared Library",
-    )
-
-    parser.add_argument(
-        "--validate-checksums",
-        action="store_true",
-        help="Validate iCloud checksums"
+        help="Ignore photos from the Shared Library",
     )
 
     parser.add_argument(
@@ -161,9 +134,15 @@ def main():
     )
 
     parser.add_argument(
-        "--version",
-        action="version",
-        version="%(prog)s 0.1.0"
+        "--output-directory-format",
+        default="%Y/%m",
+        help="Format for output directories, using strftime format codes. Default is %%Y/%%m (year/month/day)"
+    )
+
+    parser.add_argument(
+        "--no-update-creationtime",
+        action="store_true",
+        help="Do not update the creation time of the output file to match EXIF CreateDate"
     )
 
     args = parser.parse_args()
@@ -183,41 +162,165 @@ def main():
 
     return 0
 
+def process_details(photos_path, files, args):
+    csv_files = photos_path.glob(f"{FILE_PHOTOS_CSV}*{CSV_EXT}")
+    for csv_file in csv_files:
+        info(f"Processing {csv_file.name}...")
+        with open(csv_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # row is a dictionary with column headers as keys
+                if args.verbose: debug(row)
+                filename = row[COL_IMG_NAME]
+                if filename in files:
+                    warn(f"Duplicate filename {filename} found in {csv_file.name}, skipping")
+                    continue
+
+                if row[COL_DELETED] == VAL_YES:
+                    warn(f"File {filename} is marked as deleted, skipping")
+                    continue
+
+                file_path = photos_path / filename
+                if not file_path.exists():
+                    warn(f"File {filename} not found in {photos_path}, skipping")
+                    continue
+
+                row[COL_ISSHARED] = False
+                row[COL_BY_ME] = None
+                row[COL_PATH] = file_path
+                files[filename] = row
+
+def process_shared(photos_path, files, args):
+    csv_files = photos_path.glob(f"{FILE_SHARED_ALBUMS_CSV}*{CSV_EXT}")
+    for csv_file in csv_files:
+        info(f"Processing {csv_file.name}...")
+        with open(csv_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # row is a dictionary with column headers as keys
+                if args.verbose: debug(row)
+                filename = row[COL_IMG_NAME]
+
+                frow = files.get(filename, None)
+                if frow is None:
+                    # should already have been found in details
+                    warn(f"In shared but not detailed {filename} in {csv_file.name}, skipping")
+                    continue
+
+                frow[COL_ISSHARED] = True
+                frow[COL_BY_ME] = row[COL_BY_ME]
+
+
+def get_first_tag_value(exifdata, tag_name):
+    """Get the first value for a given tag name from the EXIF data."""
+    for k, v in exifdata.items():
+        if k.endswith(tag_name):
+            return v
+    return None
+
+def figure_out_createdate(file_path, exifdata):
+    create_date = None
+
+    # this can get complex, there are multiple CreateDate and Offset values, not always consistent, especially with movies
+    # we're aiming to get the earliest CreateDate that includes a time zone
+
+    # first try SubSecDateTimeOriginal, format 2021:03:26 16:25:20.236-07:00
+    tag = get_first_tag_value(exifdata, EXIF_SSCREATEDATE)
+    if tag is not None:
+        try:
+            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S.%f%z")
+        except ValueError:
+            # sometimes there are no subseconds, try without them
+            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+
+    # try DateTimeOriginal + OffsetTimeOriginal, format 2021:03:26 16:25:20 +07:00
+    tag = get_first_tag_value(exifdata, EXIF_DTORIGINAL)
+    if tag is not None:
+        tag2 = get_first_tag_value(exifdata, EXIF_DTOFFSET)
+        if tag2 is not None:
+            dt_str = f"{tag} {tag2}"
+            datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+        else:
+            # No offset, assume local time
+            warn(f"{EXIF_DTORIGINAL} found without {EXIF_DTOFFSET} for {file_path}, assuming UTC")
+            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+
+    # try CreationDate, format 2024:10:13 08:30:39-05:00
+    tag = get_first_tag_value(exifdata, EXIF_CREATIONDATE)
+    if tag is not None:
+        return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+
+    # try CreateDate, format 2021:03:26 16:25:20, assume UTC
+    tag = get_first_tag_value(exifdata, EXIF_CREATEDATE)
+    if tag is not None:
+        warn(f"{EXIF_CREATEDATE} found for {file_path}, assuming UTC")
+        return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+
+    warn(f"No CreateDate found for {file_path}, using file creation date instead")
+    create_date = datetime.datetime.fromtimestamp(file_path.stat().st_ctime, tz=datetime.timezone.utc)
+
+    return create_date
+
 
 def process_photos(photos_path, args):
-    csv_files = photos_path.glob(f"{FILE_PHOTOS_CSV}*{CSV_EXT}")
-
     files = {}
+    process_details(photos_path, files, args)
+    process_shared(photos_path, files, args)
 
-    for csv_file in csv_files:
-        if csv_file.name.startswith(FILE_PHOTOS_CSV):
-            info(f"Processing {csv_file.name}...")
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # row is a dictionary with column headers as keys
-                    if args.verbose: debug(row)
-                    filename = row[COL_IMG_NAME]
-                    if filename in files:
-                        warn(f"Duplicate filename {filename} found in {csv_file.name}, skipping")
-                        continue
+    # now remove files we are not going to process based on the skip flags
+    metadata_files = []
+    for f in files.values():
+        if f[COL_ISSHARED]:
+            if args.skip_shared_library:
+                info(f"Skipping shared library file {f[COL_PATH].name}")
+                f[COL_SKIP] = True
+                continue
+        elif args.skip_personal_library:
+                info(f"Skipping personal library file {f[COL_PATH].name}")
+                f[COL_SKIP] = True
+                continue
 
-                    if row[COL_DELETED] == VAL_YES:
-                        warn(f"File {filename} is marked as deleted, skipping")
-                        continue
+        f[COL_SKIP] = False
+        metadata_files.append(f[COL_PATH].as_posix())
 
-                    if args.validate_checksums:
-                        info(f"Validating checksum for {filename}...")
-                        file_path = photos_path / filename
-                        if not file_path.exists():
-                            error(f"File {filename} not found in {photos_path}, skipping checksum validation")
+    with exiftool.ExifToolHelper() as et:
+        # all these creation dates exist, some might have GMT offsets
+        for exifdata in et.get_tags(metadata_files, tags=EXIFTAGS):
+            if args.verbose: debug(exifdata)
+            fullpath = exifdata[EXIF_SOURCEFILE]
+            filename = Path(fullpath).name
 
-                        calculated_checksum = calculate_file_checksum(file_path)
-                        if calculated_checksum != row[COL_CHECKSUM]:
-                            error(f"Checksum mismatch for {filename}: expected {row[COL_CHECKSUM]}, got {calculated_checksum}")
+            frow = files.get(filename, None)
+            if frow is None:
+                warn(f"ExifTool Source {fullpath} -> {filename} not found in details, skipping")
+                continue
 
-                    files[filename] = row
+            create_date = figure_out_createdate(frow[COL_PATH], exifdata)
 
+            if (args.verbose): debug(f"Setting CreateDate for {filename} to {create_date} tz = {create_date.tzinfo}")
+            frow[COL_CREATEDATE] = create_date
+
+    # got all files and creation dates, now queue actions
+
+    # make output directories
+    for frow in files.values():
+        if frow[COL_SKIP]: continue
+
+        createdate = frow[COL_CREATEDATE]
+        output_dir = args.output / ("Shared" if frow[COL_ISSHARED] else "Personal") / createdate.strftime(args.output_directory_format)
+        if not args.dry_run: output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_file = output_dir / frow[COL_PATH].name
+        if output_file.exists() and not args.overwrite:
+            warn(f"Output file {output_file} already exists, skipping")
+            continue
+
+        if not args.dry_run:
+            shutil.copy2(frow[COL_PATH], output_file)
+            if not args.no_update_creationtime:
+                os.utime(output_file, (createdate.timestamp(), createdate.timestamp()))
+
+        info(f"{frow[COL_PATH].name} -> {output_file} { "[no creation change]" if args.no_update_creationtime else "[creation time updated]" }")
 
 if __name__ == "__main__":
     sys.exit(main())

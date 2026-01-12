@@ -4,6 +4,9 @@ Apple lets you download all your icloud photos in archive zip files, however it 
 
 In order to use the tool you will need to be able to use the macOS terminal and command line utilities.
 
+## Dependencies
+This tool requires the command line `exiftool` (https://exiftool.org/) by Phil Harvey. It can be installed on most systems and is capable of reading tags from images and movies alike.
+
 ## How to get the archives
 Instructions as of January 2026
 1. Got to https://privacy.apple.com.
@@ -15,7 +18,6 @@ Instructions as of January 2026
 7. You will get an email saying your download request is complete. Download all the files to one directory.
 8. Uncompress the archives (see below)
 9. Run this tool.
-
 
 ## How to uncompress the archives
 Apple seems to put zip files inside of zip files. From the directory you have the zip archives first uncompress the originals, assumes you already have the `unzip` CLI installed.
