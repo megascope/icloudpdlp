@@ -37,6 +37,7 @@ EXIF_CREATEDATE = "CreateDate"
 EXIF_SSCREATEDATE = "SubSecDateTimeOriginal"
 EXIF_DTORIGINAL = "DateTimeOriginal"
 EXIF_DTOFFSET = "OffsetTimeOriginal"
+EXIF_OFFSET = "OffsetTime"
 EXIF_CREATIONDATE = "CreationDate"
 
 EXIFTAGS = [EXIF_CREATEDATE, EXIF_SSCREATEDATE, EXIF_DTORIGINAL, EXIF_DTOFFSET, EXIF_CREATIONDATE]
@@ -214,7 +215,7 @@ def process_shared(photos_path, files, args):
 def get_first_tag_value(exifdata, tag_name):
     """Get the first value for a given tag name from the EXIF data."""
     for k, v in exifdata.items():
-        if k.endswith(tag_name):
+        if k.endswith(':' + tag_name):
             return v
     return None
 
@@ -231,15 +232,19 @@ def figure_out_createdate(file_path, exifdata):
             return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S.%f%z")
         except ValueError:
             # sometimes there are no subseconds, try without them
-            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+            try:
+                return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+            except ValueError:
+                # if that fails, fall back to the next method
+                pass
 
     # try DateTimeOriginal + OffsetTimeOriginal, format 2021:03:26 16:25:20 +07:00
     tag = get_first_tag_value(exifdata, EXIF_DTORIGINAL)
+    tag_offset = get_first_tag_value(exifdata, EXIF_DTOFFSET) or get_first_tag_value(exifdata, EXIF_OFFSET)
     if tag is not None:
-        tag2 = get_first_tag_value(exifdata, EXIF_DTOFFSET)
-        if tag2 is not None:
-            dt_str = f"{tag} {tag2}"
-            datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+        if tag_offset is not None:
+            dt_str = f"{tag}{tag_offset}"
+            return datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
         else:
             # No offset, assume local time
             warn(f"{EXIF_DTORIGINAL} found without {EXIF_DTOFFSET} for {file_path}, assuming UTC")
@@ -253,8 +258,12 @@ def figure_out_createdate(file_path, exifdata):
     # try CreateDate, format 2021:03:26 16:25:20, assume UTC
     tag = get_first_tag_value(exifdata, EXIF_CREATEDATE)
     if tag is not None:
-        warn(f"{EXIF_CREATEDATE} found for {file_path}, assuming UTC")
-        return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+        if tag_offset is not None:
+            dt_str = f"{tag}{tag_offset}"
+            return datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+        else:
+            warn(f"{EXIF_CREATEDATE} found for {file_path} without offset, assuming UTC")
+            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
 
     warn(f"No CreateDate found for {file_path}, using file creation date instead")
     create_date = datetime.datetime.fromtimestamp(file_path.stat().st_ctime, tz=datetime.timezone.utc)
