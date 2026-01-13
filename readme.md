@@ -45,3 +45,43 @@ done
 ```
 
 You are now ready to run this utility.
+
+## Usage
+
+Examples
+
+Process directories 3 and 4, with verbose logging, outputing files to `~/done`
+```
+icloudpdlp --source ~/iCloud\ Photos\ Part\ [34]\ of\ 10/ -v --output ~/done
+```
+
+Process directory 1, only file ABCD.HEIC outputing files to `~/done`
+```
+icloudpdlp --source ~/iCloud\ Photos\ Part\ 1\ of\ 10/ --include ABCD.HEIC --output ~/done
+```
+
+Process directory 2, do not make and changes but print what would be done (dry run)
+```
+icloudpdlp --source ~/iCloud\ Photos\ Part\ 2\ of\ 10/ -n
+```
+
+## Developing
+
+Clone the repo
+```
+cd icloudpdlp
+python3 -m venv .venv
+source .venv/bin/activate
+
+# install build tools
+pip install build
+
+# install this utility
+pip install -e ".[dev]"
+
+# edit code and run with
+icloudpdlp
+
+# run tests
+pytest
+```
