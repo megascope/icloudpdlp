@@ -6,7 +6,7 @@ import csv
 import exiftool
 import shutil
 import os
-
+import dateutil
 from pathlib import Path
 import datetime
 
@@ -25,10 +25,10 @@ COL_CREATED_DATE = "originalCreationDate"
 COL_IMPORT_DATE = "importDate"
 COL_BY_ME = "contributedByMe"
 COL_DELETED = "deleted"
-COL_PATH = "pyFilePath"
-COL_ISSHARED = "pyIsShared"
-COL_CREATEDATE = "pyCreateDate"
-COL_SKIP = "pySkip"
+COL_PY_PATH = "pyFilePath"
+COL_PY_ISSHARED = "pyIsShared"
+COL_PY_ITEMDATE = "pyCreateDate"
+COL_PY_SKIP = "pySkip"
 
 VAL_YES = "yes"
 VAL_NO = "no"
@@ -151,6 +151,7 @@ def main():
     if not args.output:
         warn(f"No output directory specified, assuming --dry-run mode")
         args.dry_run = True
+        args.output = Path()
 
     if args.verbose:
         info("Verbose mode enabled")
@@ -186,9 +187,9 @@ def process_details(photos_path, files, args):
                     warn(f"File {filename} not found in {photos_path}, skipping")
                     continue
 
-                row[COL_ISSHARED] = False
+                row[COL_PY_ISSHARED] = False
                 row[COL_BY_ME] = None
-                row[COL_PATH] = file_path
+                row[COL_PY_PATH] = file_path
                 files[filename] = row
 
 def process_shared(photos_path, files, args):
@@ -208,7 +209,7 @@ def process_shared(photos_path, files, args):
                     warn(f"In shared but not detailed {filename} in {csv_file.name}, skipping")
                     continue
 
-                frow[COL_ISSHARED] = True
+                frow[COL_PY_ISSHARED] = True
                 frow[COL_BY_ME] = row[COL_BY_ME]
 
 
@@ -219,7 +220,7 @@ def get_first_tag_value(exifdata, tag_name):
             return v
     return None
 
-def figure_out_createdate(file_path, exifdata):
+def figure_out_createdate(file_path, appleDate, exifdata):
     create_date = None
 
     # this can get complex, there are multiple CreateDate and Offset values, not always consistent, especially with movies
@@ -265,8 +266,10 @@ def figure_out_createdate(file_path, exifdata):
             warn(f"{EXIF_CREATEDATE} found for {file_path} without offset, assuming UTC")
             return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
 
-    warn(f"No CreateDate found for {file_path}, using file creation date instead")
-    create_date = datetime.datetime.fromtimestamp(file_path.stat().st_ctime, tz=datetime.timezone.utc)
+    warn(f"No CreateDate found for {file_path}, using Apple Original Creation date instead")
+    # apple dates are in format "Sunday August 13,2023 3:09 PM GMT"
+    # dateutil.parser can't quite handle this format, we just need to replace the comma with a space
+    create_date = dateutil.parser.parse(appleDate.replace(",", " "))
 
     return create_date
 
@@ -276,21 +279,34 @@ def process_photos(photos_path, args):
     process_details(photos_path, files, args)
     process_shared(photos_path, files, args)
 
+    # get all the files in the directory, everything but CSVS
+    for file_path in photos_path.iterdir():
+        if file_path.is_file() and file_path.suffix != CSV_EXT:
+            filename = file_path.name
+            if filename not in files:
+                warn(f"File {filename} found in {photos_path} but not in any details, adding to processing list")
+                frow = {}
+                # set some defaults so the rest of the processing works
+                frow[COL_PY_ISSHARED] = False
+                frow[COL_PY_PATH] = file_path
+                frow[COL_CREATED_DATE] = datetime.datetime.fromtimestamp(file_path.stat().st_ctime, tz=datetime.timezone.utc).isoformat()
+                files[filename] = frow
+
     # now remove files we are not going to process based on the skip flags
     metadata_files = []
     for f in files.values():
-        if f[COL_ISSHARED]:
+        if f[COL_PY_ISSHARED]:
             if args.skip_shared_library:
-                info(f"Skipping shared library file {f[COL_PATH].name}")
-                f[COL_SKIP] = True
+                info(f"Skipping shared library file {f[COL_PY_PATH].name}")
+                f[COL_PY_SKIP] = True
                 continue
         elif args.skip_personal_library:
-                info(f"Skipping personal library file {f[COL_PATH].name}")
-                f[COL_SKIP] = True
+                info(f"Skipping personal library file {f[COL_PY_PATH].name}")
+                f[COL_PY_SKIP] = True
                 continue
 
-        f[COL_SKIP] = False
-        metadata_files.append(f[COL_PATH].as_posix())
+        f[COL_PY_SKIP] = False
+        metadata_files.append(f[COL_PY_PATH].as_posix())
 
     with exiftool.ExifToolHelper() as et:
         # all these creation dates exist, some might have GMT offsets
@@ -304,32 +320,32 @@ def process_photos(photos_path, args):
                 warn(f"ExifTool Source {fullpath} -> {filename} not found in details, skipping")
                 continue
 
-            create_date = figure_out_createdate(frow[COL_PATH], exifdata)
+            create_date = figure_out_createdate(frow[COL_PY_PATH], frow[COL_CREATED_DATE], exifdata)
 
             if (args.verbose): debug(f"Setting CreateDate for {filename} to {create_date} tz = {create_date.tzinfo}")
-            frow[COL_CREATEDATE] = create_date
+            frow[COL_PY_ITEMDATE] = create_date
 
     # got all files and creation dates, now queue actions
 
     # make output directories
     for frow in files.values():
-        if frow[COL_SKIP]: continue
+        if frow[COL_PY_SKIP]: continue
 
-        createdate = frow[COL_CREATEDATE]
-        output_dir = args.output / ("Shared" if frow[COL_ISSHARED] else "Personal") / createdate.strftime(args.output_directory_format)
+        createdate = frow[COL_PY_ITEMDATE]
+        output_dir = args.output / ("Shared" if frow[COL_PY_ISSHARED] else "Personal") / createdate.strftime(args.output_directory_format)
         if not args.dry_run: output_dir.mkdir(parents=True, exist_ok=True)
 
-        output_file = output_dir / frow[COL_PATH].name
+        output_file = output_dir / frow[COL_PY_PATH].name
         if output_file.exists() and not args.overwrite:
             warn(f"Output file {output_file} already exists, skipping")
             continue
 
         if not args.dry_run:
-            shutil.copy2(frow[COL_PATH], output_file)
+            shutil.copy2(frow[COL_PY_PATH], output_file)
             if not args.no_update_creationtime:
                 os.utime(output_file, (createdate.timestamp(), createdate.timestamp()))
 
-        info(f"{frow[COL_PATH].name} -> {output_file} { "[no creation change]" if args.no_update_creationtime else "[creation time updated]" }")
+        info(f"{frow[COL_PY_PATH].name} -> {output_file} { "[no creation change]" if args.no_update_creationtime else "[creation time updated]" }")
 
 if __name__ == "__main__":
     sys.exit(main())
