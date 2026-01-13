@@ -81,6 +81,15 @@ def error(*args, **kwargs):
     print(Colors.RESET)
     raise Exception("Error occurred, exiting.")
 
+def include_file_function(patterns):
+    """Return a function that checks if a file should be included based on the provided patterns."""
+    import re
+    compiled_patterns = [re.compile(p) for p in patterns]
+
+    def include_file(filename):
+        return any(p.search(filename) for p in compiled_patterns)
+
+    return include_file
 
 def main():
 
@@ -94,7 +103,8 @@ def main():
         "--source",
         type=Path,
         required=True,
-        help="Directory containing uncompressed iCloud Photos archives, including the 'Photos' and 'iCloud Shared Albums' directories"
+        nargs='+',
+        help="Director(ies) containing uncompressed iCloud Photos archives, including the 'Photos' and 'iCloud Shared Albums' directories"
     )
 
     parser.add_argument(
@@ -146,6 +156,12 @@ def main():
         help="Do not update the creation time of the output file to match EXIF CreateDate"
     )
 
+    parser.add_argument(
+        "--include",
+        nargs='+',
+        help="set of python re patterns to include files, if not specified all files are included"
+    )
+
     args = parser.parse_args()
 
     if not args.output:
@@ -153,14 +169,18 @@ def main():
         args.dry_run = True
         args.output = Path()
 
+    if args.include:
+        args.include = include_file_function(args.include)
+
     if args.verbose:
         info("Verbose mode enabled")
 
-    photos_path = args.source / DIR_PHOTOS
-    if photos_path.exists():
-        process_photos(photos_path, args)
-    else:
-        warn(f"Photos directory not found at {photos_path}, are you running from the unzipped root?")
+    for source_dir in args.source:
+        photos_path = source_dir / DIR_PHOTOS
+        if photos_path.exists():
+            process_photos(photos_path, args)
+        else:
+            warn(f"Photos directory not found at {photos_path}, are you running from the unzipped root?")
 
     return 0
 
@@ -221,7 +241,6 @@ def get_first_tag_value(exifdata, tag_name):
     return None
 
 def figure_out_createdate(file_path, appleDate, exifdata):
-    create_date = None
 
     # this can get complex, there are multiple CreateDate and Offset values, not always consistent, especially with movies
     # we're aiming to get the earliest CreateDate that includes a time zone
@@ -242,14 +261,24 @@ def figure_out_createdate(file_path, appleDate, exifdata):
     # try DateTimeOriginal + OffsetTimeOriginal, format 2021:03:26 16:25:20 +07:00
     tag = get_first_tag_value(exifdata, EXIF_DTORIGINAL)
     tag_offset = get_first_tag_value(exifdata, EXIF_DTOFFSET) or get_first_tag_value(exifdata, EXIF_OFFSET)
+
+    # special case for tag_offset being "Z", which means UTC
+    if tag_offset == "Z" : tag_offset = "+00:00"
+
     if tag is not None:
         if tag_offset is not None:
             dt_str = f"{tag}{tag_offset}"
-            return datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+            try:
+                return datetime.datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S%z")
+            except ValueError:
+                pass
         else:
             # No offset, assume local time
             warn(f"{EXIF_DTORIGINAL} found without {EXIF_DTOFFSET} for {file_path}, assuming UTC")
-            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            try:
+                return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            except ValueError:
+                pass
 
     # try CreationDate, format 2024:10:13 08:30:39-05:00
     tag = get_first_tag_value(exifdata, EXIF_CREATIONDATE)
@@ -278,10 +307,7 @@ def figure_out_createdate(file_path, appleDate, exifdata):
     warn(f"No CreateDate found for {file_path}, using Apple Original Creation date instead")
     # apple dates are in format "Sunday August 13,2023 3:09 PM GMT"
     # dateutil.parser can't quite handle this format, we just need to replace the comma with a space
-    create_date = dateutil.parser.parse(appleDate.replace(",", " "))
-
-    return create_date
-
+    return dateutil.parser.parse(appleDate.replace(",", " "))
 
 def process_photos(photos_path, args):
     files = {}
@@ -292,6 +318,13 @@ def process_photos(photos_path, args):
     for file_path in photos_path.iterdir():
         if file_path.is_file() and file_path.suffix != CSV_EXT:
             filename = file_path.name
+
+            if args.include and not args.include(filename):
+                debug(f"Excluding {filename} based on include patterns")
+                if filename in files:
+                    del files[filename]
+                continue
+
             if filename not in files:
                 warn(f"File {filename} found in {photos_path} but not in any details, adding to processing list")
                 frow = {}
@@ -317,6 +350,7 @@ def process_photos(photos_path, args):
         f[COL_PY_SKIP] = False
         metadata_files.append(f[COL_PY_PATH].as_posix())
 
+    info(f"Getting EXIF data from {len(metadata_files)} files...")
     with exiftool.ExifToolHelper() as et:
         # all these creation dates exist, some might have GMT offsets
         for exifdata in et.get_tags(metadata_files, tags=EXIFTAGS):
