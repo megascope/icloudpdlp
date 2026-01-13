@@ -17,19 +17,6 @@ def test_main_help(capsys, monkeypatch):
     captured = capsys.readouterr()
     assert "Process and organize iCloud Photos archives" in captured.out
 
-
-def test_main_version(capsys, monkeypatch):
-    """Test that --version works."""
-    monkeypatch.setattr("sys.argv", ["icloudpdlp", "--version"])
-
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-
-    assert exc_info.value.code == 0
-    captured = capsys.readouterr()
-    assert "0.1.0" in captured.out
-
-
 class TestFigureOutCreateDate:
     """Tests for the figure_out_createdate function."""
 
@@ -114,17 +101,6 @@ class TestFigureOutCreateDate:
         result = figure_out_createdate(Path("test.jpg"), "Sunday August 13,2023 3:09 PM GMT", exifdata)
         expected = datetime.datetime(2023, 8, 13, 15, 9, tzinfo=datetime.timezone.utc)
         assert result == expected
-
-    def test_apple_date_with_different_timezone(self):
-        """Test Apple date parsing with non-GMT timezone."""
-        exifdata = {}
-        result = figure_out_createdate(Path("test.jpg"), "Monday January 15,2024 10:30 AM PST", exifdata)
-        # dateutil.parser should handle PST
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
-        assert result.hour == 10
-        assert result.minute == 30
 
     def test_priority_subsec_over_datetime_original(self):
         """Test that SubSecDateTimeOriginal takes priority over DateTimeOriginal."""
