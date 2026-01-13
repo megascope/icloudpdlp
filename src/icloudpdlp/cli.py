@@ -56,34 +56,34 @@ class Colors:
     GRAY = "\033[90m"
     BOLD = "\033[1m"
 
-
 def info(*args, **kwargs):
     """Print info message in cyan color."""
-    print(f"{Colors.BOLD}", end="")
+    print(f"{Colors.BOLD}INFO: ", end="")
     print(*args, **kwargs, end="")
     print(Colors.RESET)
 
 def warn(*args, **kwargs):
     """Print warning message in yellow color."""
-    print(f"{Colors.YELLOW}", end="")
+    print(f"{Colors.YELLOW}WARN: ", end="")
     print(*args, **kwargs, end="")
     print(Colors.RESET)
 
 def debug(*args, **kwargs):
     """Print debug message in gray color."""
-    print(f"{Colors.GRAY}", end="")
+    print(f"{Colors.GRAY}DEBUG: ", end="")
     print(*args, **kwargs, end="")
     print(Colors.RESET)
 
 def error(*args, **kwargs):
     """Print error message in red color."""
-    print(f"{Colors.RED}", end="")
+    print(f"{Colors.RED}ERROR: ", end="")
     print(*args, **kwargs, end="")
     print(Colors.RESET)
     raise Exception("Error occurred, exiting.")
 
 
 def main():
+
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
         description="Process and organize iCloud Photos archives",
@@ -254,17 +254,26 @@ def figure_out_createdate(file_path, appleDate, exifdata):
     # try CreationDate, format 2024:10:13 08:30:39-05:00
     tag = get_first_tag_value(exifdata, EXIF_CREATIONDATE)
     if tag is not None:
-        return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+        try:
+            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S%z")
+        except ValueError:
+            pass
 
     # try CreateDate, format 2021:03:26 16:25:20, assume UTC
     tag = get_first_tag_value(exifdata, EXIF_CREATEDATE)
     if tag is not None:
         if tag_offset is not None:
             dt_str = f"{tag}{tag_offset}"
-            return datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+            try:
+                return datetime.datetime.strptime(dt_str, "%Y:%m:%d H:%M:%S%z")
+            except ValueError:
+                pass
         else:
             warn(f"{EXIF_CREATEDATE} found for {file_path} without offset, assuming UTC")
-            return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            try:
+                return datetime.datetime.strptime(tag, "%Y:%m:%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            except ValueError:
+                pass
 
     warn(f"No CreateDate found for {file_path}, using Apple Original Creation date instead")
     # apple dates are in format "Sunday August 13,2023 3:09 PM GMT"
